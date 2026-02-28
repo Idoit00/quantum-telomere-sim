@@ -1,0 +1,6 @@
+Factor,Effect_Size,Metric,Source
+Adiposity,-4.0,Percentage_Loss_TL,PMC3676725
+Strength_Training,0.67,Base_Pairs_Per_Minute,MDPI_2024
+Sugar_Meat_Diet,-50.0,Shortening_Acceleration,PubMed_37329271
+Muscle_Mass,57.0,Mortality_Reduction,Oncotarget_15976
+Heritability,64.0,Inherited_Percentage,Springer_2012 
