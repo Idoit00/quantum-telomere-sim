@@ -1,6 +1,7 @@
 Factor,Effect_Size,Metric,Source
-Adiposity,-4.0,Percentage_Loss_TL,PMC3676725
-Strength_Training,0.67,Base_Pairs_Per_Minute,MDPI_2024
-Sugar_Meat_Diet,-50.0,Shortening_Acceleration,PubMed_37329271
-Muscle_Mass,57.0,Mortality_Reduction,Oncotarget_15976
-Heritability,64.0,Inherited_Percentage,Springer_2012 
+Strength_Training,0.67,bp gain per 1 min/week
+Heritability,64.0,% probability baseline
+Adiposity,-4.0,% shorter telomeres
+Sugar_Meat_Diet,-24.8,% R^2 contribution
+Vitamin_D3,35.0,bp saved per year
+Sleep_Penalty,-20.0,bp loss (poor sleep)

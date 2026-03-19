@@ -17,6 +17,67 @@ import plotly.express as px
 DATA_PATH = "study_data.csv"
 
 
+TL_BIRTH_BP = 10_000
+TL_SENESCENCE_FLOOR_BP = 4_000
+AVG_POPULATION_ATTRITION_BP_PER_YEAR = 30.0
+
+
+def compute_telomere_length_bp(
+    *,
+    age_years: int,
+    strength_training_mins_per_week: int,
+    stress_level_1_to_10: int,
+    sleep_hours: float,
+    vitamin_d3: bool,
+):
+    """
+    Physics-based equation:
+      TL_Current = TL_Birth - (Age * Attrition) + (ST * 0.67) + (VitD_Bonus) ± (Sleep_Mod)
+    Where:
+      TL_Birth = 10,000 bp baseline
+      Senescence floor = 4,000 bp
+      Attrition = 45 bp/year if stress is high, else 15.5 bp/year
+      ST bonus = 0.67 bp/min * weekly strength minutes (annualized in model as a "current-state" modifier)
+      VitD_Bonus = 35 bp/year if supplementing, else 0
+      Sleep_Mod = bounded modifier based on sleep hours vs 8h baseline
+    """
+
+    high_stress = stress_level_1_to_10 >= 7
+    annual_attrition = 45.0 if high_stress else 15.5
+
+    strength_bonus_bp = float(strength_training_mins_per_week) * 0.67
+    vitd_bonus_bp = 35.0 if vitamin_d3 else 0.0
+
+    sleep_delta = float(sleep_hours) - 8.0
+    sleep_mod_bp = max(-200.0, min(200.0, sleep_delta * 50.0))
+
+    tl = (
+        TL_BIRTH_BP
+        - (float(age_years) * annual_attrition)
+        + strength_bonus_bp
+        + vitd_bonus_bp
+        + sleep_mod_bp
+    )
+    tl = max(float(TL_SENESCENCE_FLOOR_BP), float(tl))
+
+    return {
+        "tl_current_bp": float(tl),
+        "annual_attrition_bp_per_year": float(annual_attrition),
+        "strength_bonus_bp": float(strength_bonus_bp),
+        "vitd_bonus_bp": float(vitd_bonus_bp),
+        "sleep_mod_bp": float(sleep_mod_bp),
+    }
+
+
+def biological_age_from_telomere_length(*, tl_current_bp: float):
+    """
+    Computes Biological Age by comparing TL to an average population decay rate.
+    """
+    bp_lost = max(0.0, float(TL_BIRTH_BP) - float(tl_current_bp))
+    bio_age = bp_lost / float(AVG_POPULATION_ATTRITION_BP_PER_YEAR)
+    return round(max(0.0, min(120.0, bio_age)), 1)
+
+
 def run_quantum_simulation(age, stress, exercise_mins, weight_gain, diet_quality, muscle_score):
     """Research-backed quantum simulation: multi-qubit register driven by CSV values."""
     df = pd.read_csv(DATA_PATH)
@@ -40,8 +101,13 @@ def run_quantum_simulation(age, stress, exercise_mins, weight_gain, diet_quality
         theta_q0 += 0.15 * math.pi
     theta_q0 = max(0.0, min(math.pi, theta_q0))
 
-    # Q1/Q2/Q3: rotations from study effect sizes
-    theta_q1 = max(0.0, min(math.pi, (0.5 + (strength_impact / 100.0)) * math.pi))
+    # Q1: map Muscle Bonus (0.67 bp/min) to RY rotation angle
+    # Scale weekly minutes to [0, π] using the sidebar max (300 mins).
+    muscle_bonus_bp = max(0.0, float(exercise_mins)) * 0.67
+    max_muscle_bonus_bp = 300.0 * 0.67
+    theta_q1 = max(0.0, min(math.pi, (muscle_bonus_bp / max_muscle_bonus_bp) * math.pi))
+
+    # Q2/Q3: rotations from study effect sizes (diet quality + adiposity)
     theta_q2 = max(0.0, min(math.pi, (0.5 + (diet_impact / 100.0)) * math.pi))
     theta_q3 = max(0.0, min(math.pi, (0.5 + (weight_impact / 100.0)) * math.pi))
 
@@ -53,8 +119,8 @@ def run_quantum_simulation(age, stress, exercise_mins, weight_gain, diet_quality
     qc.ry(theta_q3, 3)
 
     # Entanglement links
-    qc.cx(1, 0)  # Exercise -> Genetics
-    qc.cx(2, 3)  # Diet -> Adiposity
+    qc.cx(1, 0)  # Muscle Bonus -> Genetics (resilience coupling)
+    qc.cx(2, 3)  # Diet Quality (metabolic stress) -> Adiposity (genetic risk proxy)
 
     # Homeostatic failure tipping points under extreme environmental pressure.
     if stress > 80:
@@ -121,7 +187,7 @@ def run_quantum_simulation(age, stress, exercise_mins, weight_gain, diet_quality
         "theta": theta_q0,
         "theta_components": {
             "q0_genetics_age": theta_q0,
-            "q1_exercise": theta_q1,
+            "q1_muscle_bonus": theta_q1,
             "q2_nutrition": theta_q2,
             "q3_adiposity": theta_q3,
         },
@@ -272,14 +338,34 @@ params_col, content_col = st.columns([1, 3])
 with params_col:
     st.markdown("### Parameters")
     age = st.slider("Age (years)", min_value=20, max_value=90, value=45, step=1)
-    stress = st.slider("Stress Level", min_value=0, max_value=100, value=50, step=1)
     st.markdown("#### Research inputs")
-    strength_mins = st.slider("Weekly Strength Training (mins)", min_value=0, max_value=300, value=60, step=5)
     body_fat_change = st.slider("Body Fat % Change", min_value=-20.0, max_value=30.0, value=0.0, step=0.5)
     diet_quality = st.slider("Diet Quality", min_value=0, max_value=100, value=60, step=5)
     muscle_score = st.slider("Muscle Score", min_value=0, max_value=100, value=60, step=5)
 
 st.sidebar.caption("Quantum Mode: Multi-Qubit Register Active")
+st.sidebar.markdown("### Lifestyle Inputs")
+strength_mins = st.sidebar.slider("Weekly Strength Training (0–300 mins)", min_value=0, max_value=300, value=60, step=5)
+sleep_hours = st.sidebar.slider("Sleep Hours (4–12)", min_value=4.0, max_value=12.0, value=8.0, step=0.25)
+stress_level_1_to_10 = st.sidebar.slider("Stress Level (1–10)", min_value=1, max_value=10, value=5, step=1)
+vitd_toggle = st.sidebar.toggle("Vitamin D3 supplementation", value=False)
+
+# Convert sidebar stress to the quantum model's 0–100 scale
+stress = int(round((stress_level_1_to_10 - 1) / 9 * 100))
+
+# --- Predictive Logic: physics-based telomere length + biological age ---
+tl_result = compute_telomere_length_bp(
+    age_years=age,
+    strength_training_mins_per_week=strength_mins,
+    stress_level_1_to_10=stress_level_1_to_10,
+    sleep_hours=sleep_hours,
+    vitamin_d3=vitd_toggle,
+)
+telomere_length_bp = tl_result["tl_current_bp"]
+biological_age = biological_age_from_telomere_length(tl_current_bp=telomere_length_bp)
+
+# UI helper: "Total Base Pairs Saved" (annualized lifestyle bonus display)
+total_bp_saved = tl_result["strength_bonus_bp"] + (35.0 if vitd_toggle else 0.0)
 
 # ---- Load studies table (for display) ----
 df_studies = None
@@ -300,7 +386,6 @@ blue_zone_active = sim_result["blue_zone_active"]
 metabolic_milestone = sim_result["metabolic_milestone"]
 bloch_coords = sim_result["bloch_coords"]
 decay_probability = prob_1
-biological_age = sim_result["biological_age"]
 
 # ---- Main content: big Biological Age + chart ----
 with content_col:
@@ -311,6 +396,18 @@ with content_col:
         f'<div class="bio-age-readout">{biological_age} years</div>'
         f'</div>',
         unsafe_allow_html=True,
+    )
+    st.markdown(
+        f'<div class="glass-card" style="margin-top:0.75rem;">'
+        f'<div class="metric-label">Telomere Length (Estimated)</div>'
+        f'<div class="metric-value">{telomere_length_bp:,.0f} bp</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+    st.text_input(
+        "Total Base Pairs Saved",
+        value=f"{total_bp_saved:,.1f} bp (0.67 bp/min strength + 35 bp/year Vit D bonus)",
+        disabled=True,
     )
     st.caption(
         f"Biological Entropy: {entropy_level:.2%} "
