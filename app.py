@@ -29,17 +29,21 @@ def compute_telomere_length_bp(
     stress_level_1_to_10: int,
     sleep_hours: float,
     vitamin_d3: bool,
+    diet_quality: int = 50,
+    adiposity_change_percent: float = 0.0,
 ):
     """
     Physics-based equation:
-      TL_Current = TL_Birth - (Age * Attrition) + (ST * 0.67) + (VitD_Bonus) ± (Sleep_Mod)
+      TL_Current = TL_Birth - (Age * Attrition) + (ST * 0.67) + (VitD_Bonus) + (Sleep_Mod) + (Diet_Mod) + (Adiposity_Mod)
     Where:
       TL_Birth = 10,000 bp baseline
       Senescence floor = 4,000 bp
       Attrition = 45 bp/year if stress is high, else 15.5 bp/year
       ST bonus = 0.67 bp/min * weekly strength minutes (annualized in model as a "current-state" modifier)
       VitD_Bonus = 35 bp/year if supplementing, else 0
-      Sleep_Mod = bounded modifier based on sleep hours vs 8h baseline
+      Sleep_Mod = -20 bp penalty for poor sleep, else 0
+      Diet_Mod = % contribution from Sugar_Meat_Diet effect
+      Adiposity_Mod = % shorter telomeres from Adiposity effect
     """
 
     high_stress = stress_level_1_to_10 >= 7
@@ -47,9 +51,9 @@ def compute_telomere_length_bp(
 
     strength_bonus_bp = float(strength_training_mins_per_week) * 0.67
     vitd_bonus_bp = 35.0 if vitamin_d3 else 0.0
-
-    sleep_delta = float(sleep_hours) - 8.0
-    sleep_mod_bp = max(-200.0, min(200.0, sleep_delta * 50.0))
+    sleep_mod_bp = -20.0 if float(sleep_hours) < 7.0 else 0.0
+    diet_mod_bp = ((float(diet_quality) - 50.0) / 50.0) * 24.8
+    adiposity_mod_bp = -max(0.0, float(adiposity_change_percent)) * 4.0
 
     tl = (
         TL_BIRTH_BP
@@ -57,6 +61,8 @@ def compute_telomere_length_bp(
         + strength_bonus_bp
         + vitd_bonus_bp
         + sleep_mod_bp
+        + diet_mod_bp
+        + adiposity_mod_bp
     )
     tl = max(float(TL_SENESCENCE_FLOOR_BP), float(tl))
 
@@ -66,6 +72,8 @@ def compute_telomere_length_bp(
         "strength_bonus_bp": float(strength_bonus_bp),
         "vitd_bonus_bp": float(vitd_bonus_bp),
         "sleep_mod_bp": float(sleep_mod_bp),
+        "diet_mod_bp": float(diet_mod_bp),
+        "adiposity_mod_bp": float(adiposity_mod_bp),
     }
 
 
@@ -88,7 +96,7 @@ def run_quantum_simulation(age, stress, exercise_mins, weight_gain, diet_quality
         return float(row["Effect_Size"].values[0]) if len(row) > 0 else default
 
     strength_impact = get_effect("Strength_Training", 0.67)
-    diet_impact = get_effect("Sugar_Meat_Diet", -50.0)
+    diet_impact = get_effect("Sugar_Meat_Diet", -24.8)
     weight_impact = get_effect("Adiposity", -4.0)
     inheritance_base = get_effect("Heritability", 64.0) / 100.0
     noise_level = (age / 100.0) * 0.1
@@ -103,8 +111,8 @@ def run_quantum_simulation(age, stress, exercise_mins, weight_gain, diet_quality
 
     # Q1: map Muscle Bonus (0.67 bp/min) to RY rotation angle
     # Scale weekly minutes to [0, π] using the sidebar max (300 mins).
-    muscle_bonus_bp = max(0.0, float(exercise_mins)) * 0.67
-    max_muscle_bonus_bp = 300.0 * 0.67
+    muscle_bonus_bp = max(0.0, float(exercise_mins)) * strength_impact
+    max_muscle_bonus_bp = 300.0 * strength_impact
     theta_q1 = max(0.0, min(math.pi, (muscle_bonus_bp / max_muscle_bonus_bp) * math.pi))
 
     # Q2/Q3: rotations from study effect sizes (diet quality + adiposity)
@@ -360,17 +368,27 @@ tl_result = compute_telomere_length_bp(
     stress_level_1_to_10=stress_level_1_to_10,
     sleep_hours=sleep_hours,
     vitamin_d3=vitd_toggle,
+    diet_quality=diet_quality,
+    adiposity_change_percent=body_fat_change,
 )
 telomere_length_bp = tl_result["tl_current_bp"]
 biological_age = biological_age_from_telomere_length(tl_current_bp=telomere_length_bp)
 
-# UI helper: "Total Base Pairs Saved" (annualized lifestyle bonus display)
-total_bp_saved = tl_result["strength_bonus_bp"] + (35.0 if vitd_toggle else 0.0)
+# UI helper: "Total Base Pairs Saved" (research constants called out explicitly)
+total_bp_saved = tl_result["strength_bonus_bp"] + tl_result["vitd_bonus_bp"]
 
 # ---- Load studies table (for display) ----
 df_studies = None
 try:
     df_studies = pd.read_csv(DATA_PATH)
+    source_labels = {
+        "IMG_3285": "Direct Clinical Observation",
+        "PMC4707879": "PubMed Central Study",
+        "image_eff092": "Diet and Adiposity Analysis",
+        "image_efeda8": "Lifestyle Intervention Summary",
+    }
+    if "Source" in df_studies.columns:
+        df_studies["Source"] = df_studies["Source"].replace(source_labels)
 except Exception:
     df_studies = pd.DataFrame(columns=["Factor", "Effect_Size", "Metric", "Source"])
 
@@ -406,7 +424,10 @@ with content_col:
     )
     st.text_input(
         "Total Base Pairs Saved",
-        value=f"{total_bp_saved:,.1f} bp (0.67 bp/min strength + 35 bp/year Vit D bonus)",
+        value=(
+            f"{total_bp_saved:,.1f} bp "
+            f"(includes 0.67 bp/min strength-training effect and 35 bp/year Vitamin D3 bonus)"
+        ),
         disabled=True,
     )
     st.caption(
