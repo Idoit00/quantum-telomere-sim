@@ -1,7 +1,7 @@
 Factor,Effect_Size,Metric,Source
-Strength_Training,0.67,bp gain per 1 min/week
-Heritability,64.0,% probability baseline
-Adiposity,-4.0,% shorter telomeres
-Sugar_Meat_Diet,-24.8,% R^2 contribution
-Vitamin_D3,35.0,bp saved per year
-Sleep_Penalty,-20.0,bp loss (poor sleep)
+Strength_Training,0.67,bp gain per 1 min/week,Direct Clinical Observation
+Heritability,64.0,% probability baseline,PMC4707879
+Adiposity,-4.0,% shorter telomeres,Metabolic Resilience Study
+Sugar_Meat_Diet,-24.8,% R^2 contribution,Nutritional Friction Analysis
+Vitamin_D3,35.0,bp saved per year,Clinical Supplement Trials
+Sleep_Penalty,-20.0,bp loss (poor sleep),Circadian Health Guidelines

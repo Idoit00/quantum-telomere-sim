@@ -20,6 +20,20 @@ DATA_PATH = "study_data.csv"
 TL_BIRTH_BP = 10_000
 TL_SENESCENCE_FLOOR_BP = 4_000
 AVG_POPULATION_ATTRITION_BP_PER_YEAR = 30.0
+MAX_BIOLOGICAL_AGE_ADVANTAGE_YEARS = 15.0
+
+
+def load_study_data():
+    try:
+        return pd.read_csv(DATA_PATH)
+    except Exception:
+        return pd.DataFrame(columns=["Factor", "Effect_Size", "Metric", "Source"])
+
+
+def get_effect(factor, default, df=None):
+    study_df = df if df is not None else load_study_data()
+    row = study_df[study_df["Factor"] == factor]
+    return float(row["Effect_Size"].values[0]) if len(row) > 0 else float(default)
 
 
 def compute_telomere_length_bp(
@@ -34,26 +48,30 @@ def compute_telomere_length_bp(
 ):
     """
     Physics-based equation:
-      TL_Current = TL_Birth - (Age * Attrition) + (ST * 0.67) + (VitD_Bonus) + (Sleep_Mod) + (Diet_Mod) + (Adiposity_Mod)
+      TL_Current = TL_Birth - (Age * Attrition) + (ST * Strength_Effect) + (VitD_Bonus) + (Sleep_Mod) + (Diet_Mod) + (Adiposity_Mod)
     Where:
       TL_Birth = 10,000 bp baseline
       Senescence floor = 4,000 bp
       Attrition = 45 bp/year if stress is high, else 15.5 bp/year
-      ST bonus = 0.67 bp/min * weekly strength minutes (annualized in model as a "current-state" modifier)
+      ST bonus = CSV-backed strength effect * weekly strength minutes
       VitD_Bonus = 35 bp/year if supplementing, else 0
-      Sleep_Mod = -20 bp penalty for poor sleep, else 0
-      Diet_Mod = % contribution from Sugar_Meat_Diet effect
-      Adiposity_Mod = % shorter telomeres from Adiposity effect
+      Sleep_Mod = -20 bp penalty if sleep is below 7h or above 9h, else 0
+      Diet_Mod = CSV-backed Sugar_Meat_Diet effect scaled by diet quality
+      Adiposity_Mod = CSV-backed Adiposity effect scaled by positive adiposity change
     """
+    study_df = load_study_data()
+    strength_effect = get_effect("Strength_Training", 0.67, df=study_df)
+    diet_effect = get_effect("Sugar_Meat_Diet", -24.8, df=study_df)
+    adiposity_effect = get_effect("Adiposity", -4.0, df=study_df)
 
     high_stress = stress_level_1_to_10 >= 7
     annual_attrition = 45.0 if high_stress else 15.5
 
-    strength_bonus_bp = float(strength_training_mins_per_week) * 0.67
+    strength_bonus_bp = float(strength_training_mins_per_week) * strength_effect
     vitd_bonus_bp = 35.0 if vitamin_d3 else 0.0
-    sleep_mod_bp = -20.0 if float(sleep_hours) < 7.0 else 0.0
-    diet_mod_bp = ((float(diet_quality) - 50.0) / 50.0) * 24.8
-    adiposity_mod_bp = -max(0.0, float(adiposity_change_percent)) * 4.0
+    sleep_mod_bp = -20.0 if float(sleep_hours) < 7.0 or float(sleep_hours) > 9.0 else 0.0
+    diet_mod_bp = ((float(diet_quality) - 50.0) / 50.0) * abs(diet_effect)
+    adiposity_mod_bp = max(0.0, float(adiposity_change_percent)) * adiposity_effect
 
     tl = (
         TL_BIRTH_BP
@@ -70,6 +88,7 @@ def compute_telomere_length_bp(
         "tl_current_bp": float(tl),
         "annual_attrition_bp_per_year": float(annual_attrition),
         "strength_bonus_bp": float(strength_bonus_bp),
+        "strength_effect_bp_per_min": float(strength_effect),
         "vitd_bonus_bp": float(vitd_bonus_bp),
         "sleep_mod_bp": float(sleep_mod_bp),
         "diet_mod_bp": float(diet_mod_bp),
@@ -77,23 +96,30 @@ def compute_telomere_length_bp(
     }
 
 
-def biological_age_from_telomere_length(*, tl_current_bp: float):
+def biological_age_from_telomere_length(*, tl_current_bp: float, chronological_age_years: int):
     """
-    Computes Biological Age by comparing TL to an average population decay rate.
+    Computes Biological Age from the gap between the user's telomere length and
+    the age-matched population expectation, then converts that gap into a bounded
+    age delta.
     """
-    bp_lost = max(0.0, float(TL_BIRTH_BP) - float(tl_current_bp))
-    bio_age = bp_lost / float(AVG_POPULATION_ATTRITION_BP_PER_YEAR)
-    return round(max(0.0, min(120.0, bio_age)), 1)
+    expected_tl_bp = float(TL_BIRTH_BP) - (
+        float(chronological_age_years) * float(AVG_POPULATION_ATTRITION_BP_PER_YEAR)
+    )
+    bp_delta_vs_average = float(tl_current_bp) - expected_tl_bp
+    telomere_lifespan_reserve_bp = float(TL_BIRTH_BP - TL_SENESCENCE_FLOOR_BP)
+    age_delta_years = (
+        bp_delta_vs_average / telomere_lifespan_reserve_bp
+    ) * float(chronological_age_years)
+
+    bio_age = float(chronological_age_years) - age_delta_years
+    minimum_realistic_age = float(chronological_age_years) - MAX_BIOLOGICAL_AGE_ADVANTAGE_YEARS
+    bio_age = max(minimum_realistic_age, min(120.0, bio_age))
+    return round(max(0.0, bio_age), 1)
 
 
 def run_quantum_simulation(age, stress, exercise_mins, weight_gain, diet_quality, muscle_score):
     """Research-backed quantum simulation: multi-qubit register driven by CSV values."""
-    df = pd.read_csv(DATA_PATH)
-
-    # Extract study values (with fallbacks if factor missing)
-    def get_effect(factor, default):
-        row = df[df["Factor"] == factor]
-        return float(row["Effect_Size"].values[0]) if len(row) > 0 else default
+    df = load_study_data()
 
     strength_impact = get_effect("Strength_Training", 0.67)
     diet_impact = get_effect("Sugar_Meat_Diet", -24.8)
@@ -300,6 +326,10 @@ st.markdown("""
         padding: 1rem 0;
     }
     
+    .bio-age-readout.senescence-warning {
+        color: #e07a5f !important;
+    }
+    
     .footer-box {
         font-family: 'Source Serif 4', Georgia, serif;
         font-size: 0.9rem;
@@ -372,7 +402,10 @@ tl_result = compute_telomere_length_bp(
     adiposity_change_percent=body_fat_change,
 )
 telomere_length_bp = tl_result["tl_current_bp"]
-biological_age = biological_age_from_telomere_length(tl_current_bp=telomere_length_bp)
+biological_age = biological_age_from_telomere_length(
+    tl_current_bp=telomere_length_bp,
+    chronological_age_years=age,
+)
 
 # UI helper: "Total Base Pairs Saved" (research constants called out explicitly)
 total_bp_saved = tl_result["strength_bonus_bp"] + tl_result["vitd_bonus_bp"]
@@ -380,10 +413,10 @@ total_bp_saved = tl_result["strength_bonus_bp"] + tl_result["vitd_bonus_bp"]
 # ---- Load studies table (for display) ----
 df_studies = None
 try:
-    df_studies = pd.read_csv(DATA_PATH)
+    df_studies = load_study_data()
     source_labels = {
         "IMG_3285": "Direct Clinical Observation",
-        "PMC4707879": "PubMed Central Study",
+        "PMC4707879": "PMC4707879",
         "image_eff092": "Diet and Adiposity Analysis",
         "image_efeda8": "Lifestyle Intervention Summary",
     }
@@ -407,14 +440,19 @@ decay_probability = prob_1
 
 # ---- Main content: big Biological Age + chart ----
 with content_col:
+    senescence_reached = telomere_length_bp <= TL_SENESCENCE_FLOOR_BP
+    bio_age_class = "bio-age-readout senescence-warning" if senescence_reached else "bio-age-readout"
+
     # Big Biological Age readout
     st.markdown(
         f'<div class="glass-card">'
         f'<div class="metric-label">Biological Age</div>'
-        f'<div class="bio-age-readout">{biological_age} years</div>'
+        f'<div class="{bio_age_class}">{biological_age} years</div>'
         f'</div>',
         unsafe_allow_html=True,
     )
+    if senescence_reached:
+        st.error("CRITICAL: Senescence Threshold Reached")
     st.markdown(
         f'<div class="glass-card" style="margin-top:0.75rem;">'
         f'<div class="metric-label">Telomere Length (Estimated)</div>'
@@ -426,7 +464,7 @@ with content_col:
         "Total Base Pairs Saved",
         value=(
             f"{total_bp_saved:,.1f} bp "
-            f"(includes 0.67 bp/min strength-training effect and 35 bp/year Vitamin D3 bonus)"
+            f"(Calculated from 0.67 bp/min Strength Training + 35 bp/year Vitamin D bonus.)"
         ),
         disabled=True,
     )
