@@ -17,8 +17,17 @@ import plotly.express as px
 DATA_PATH = "study_data.csv"
 
 
-def run_quantum_simulation(age, stress, exercise_mins, weight_gain, diet_quality, muscle_score):
-    """Research-backed quantum simulation: multi-qubit register driven by CSV values."""
+def run_quantum_simulation(
+    age,
+    stress,
+    exercise_mins,
+    weight_gain,
+    diet_quality,
+    muscle_score,
+    vitd_supplement,
+    sleep_hours,
+):
+    """Physics-based telomere attrition model driving a 4-qubit circuit."""
     df = pd.read_csv(DATA_PATH)
 
     # Extract study values (with fallbacks if factor missing)
@@ -26,21 +35,50 @@ def run_quantum_simulation(age, stress, exercise_mins, weight_gain, diet_quality
         row = df[df["Factor"] == factor]
         return float(row["Effect_Size"].values[0]) if len(row) > 0 else default
 
-    strength_impact = get_effect("Strength_Training", 0.67)
-    diet_impact = get_effect("Sugar_Meat_Diet", -50.0)
-    weight_impact = get_effect("Adiposity", -4.0)
-    inheritance_base = get_effect("Heritability", 64.0) / 100.0
-    noise_level = (age / 100.0) * 0.1
+    # Pull core effects from the study table
+    strength_impact = get_effect("Strength_Training", 0.67)  # bp per min/week
+    vitd_bonus_per_year = get_effect("Vitamin_D3", 35.0)  # bp saved per year
+    sleep_penalty_per_year = abs(get_effect("Sleep_Penalty", -20.0))  # bp loss per year
+    adiposity_effect_pct = abs(get_effect("Adiposity", -4.0))  # % reduction
 
-    # Q0 (Genetics): theta based on age
-    theta_q0 = (age / 100.0) * math.pi
-    metabolic_milestone = (39 <= age <= 42) or (69 <= age <= 72)
-    if metabolic_milestone:
-        # Significant TL velocity changes are observed near ages 40 and 70.
-        theta_q0 += 0.15 * math.pi
+    # Physics-based telomere constants
+    BIRTH_LENGTH = 10000.0  # bp
+    SENESCENCE_FLOOR = 4000.0  # bp
+    ATTRITION_LOW = 15.5  # bp/year
+    ATTRITION_HIGH = 45.0  # bp/year
+    AVG_POP_DECAY = 30.25  # bp/year
+
+    # Attrition selection (Stress Rule)
+    attrition_rate = ATTRITION_HIGH if stress > 5 else ATTRITION_LOW
+
+    # Buffers and penalties
+    strength_buffer = exercise_mins * strength_impact
+    vitd_buffer = vitd_bonus_per_year if vitd_supplement else 0.0
+    sleep_penalty = sleep_penalty_per_year if (sleep_hours < 6 or sleep_hours > 9) else 0.0
+
+    # Core telomere length equation
+    loss_term = age * attrition_rate
+    buffer_term = strength_buffer + vitd_buffer - sleep_penalty
+    tl_current = BIRTH_LENGTH - loss_term + buffer_term
+
+    # Adiposity Rule
+    if weight_gain > 15 and age > 50:
+        tl_current *= (1.0 - adiposity_effect_pct / 100.0)
+
+    # Clamp within biological range
+    tl_current = max(SENESCENCE_FLOOR, min(BIRTH_LENGTH, tl_current))
+
+    # Map TL to Genetics Qubit RY rotation:
+    # 10,000 bp -> theta = 0 (pure resilience), 4,000 bp -> theta = pi (pure decay).
+    theta_q0 = ((BIRTH_LENGTH - tl_current) / (BIRTH_LENGTH - SENESCENCE_FLOOR)) * math.pi
     theta_q0 = max(0.0, min(math.pi, theta_q0))
 
+    # Metabolic milestone marker retained for UI context
+    metabolic_milestone = (39 <= age <= 42) or (69 <= age <= 72)
+
     # Q1/Q2/Q3: rotations from study effect sizes
+    diet_impact = get_effect("Sugar_Meat_Diet", -50.0)
+    weight_impact = get_effect("Adiposity", -4.0)
     theta_q1 = max(0.0, min(math.pi, (0.5 + (strength_impact / 100.0)) * math.pi))
     theta_q2 = max(0.0, min(math.pi, (0.5 + (diet_impact / 100.0)) * math.pi))
     theta_q3 = max(0.0, min(math.pi, (0.5 + (weight_impact / 100.0)) * math.pi))
@@ -73,6 +111,7 @@ def run_quantum_simulation(age, stress, exercise_mins, weight_gain, diet_quality
         qc.ry(-0.12, 0)  # Nudge Q0 back toward |0> (younger/resilient state)
 
     # Decoherence layer: age-driven biological entropy across all qubits
+    noise_level = (age / 100.0) * 0.1
     for i in range(4):
         qc.rx(noise_level, i)
         qc.rz(noise_level, i)
@@ -90,32 +129,20 @@ def run_quantum_simulation(age, stress, exercise_mins, weight_gain, diet_quality
     prob_0 = counts.get("0", 0) / n
     prob_1 = counts.get("1", 0) / n
 
-    # Biological age from quantum result + inputs
-    decay = prob_1
-    entropy_impact = prob_1 * (age / 20.0)
-    threshold_penalty = 0.0
-    if stress > 80:
-        threshold_penalty += 5.0
-    if exercise_mins < 30:
-        threshold_penalty += 3.0
-    tipping_point_reached = threshold_penalty > 0.0
-    blue_zone_bonus = 0.0
-    if elite_longevity:
-        blue_zone_bonus += 4.0
-    if metabolic_shield:
-        blue_zone_bonus += 2.5
-    blue_zone_active = blue_zone_bonus > 0.0
-    velocity_penalty = 2.5 if metabolic_milestone else 0.0
-    bio_age = age + (decay * 8) - (exercise_mins * strength_impact / 500.0)
-    if weight_gain > 15:
-        bio_age += abs(weight_impact) / 5.0
-    bio_age += (1.0 - muscle_score / 100.0) * 3.0
-    bio_age -= (inheritance_base - 0.5) * 1.5
-    bio_age += entropy_impact
-    bio_age += threshold_penalty
-    bio_age -= blue_zone_bonus
-    bio_age += velocity_penalty
-    bio_age = round(max(20, min(95, bio_age)), 1)
+    # Biological age from physics-based telomere model
+    telomere_loss = BIRTH_LENGTH - tl_current
+    bio_age_equivalent = telomere_loss / AVG_POP_DECAY
+    bio_age = round(max(20.0, min(95.0, bio_age_equivalent)), 1)
+
+    # Threshold/tipping point markers reinterpreted for clarity
+    tipping_point_reached = tl_current <= (SENESCENCE_FLOOR + 500)
+    blue_zone_active = elite_longevity or metabolic_shield
+
+    math_breakdown = (
+        f"10,000 - ({loss_term:.1f} bp loss) + ({buffer_term:.1f} bp buffers)"
+        f"{' with 4% adiposity tax' if (weight_gain > 15 and age > 50) else ''}"
+        f" = {tl_current:.1f} bp"
+    )
 
     return {
         "theta": theta_q0,
@@ -132,13 +159,33 @@ def run_quantum_simulation(age, stress, exercise_mins, weight_gain, diet_quality
         "blue_zone_active": blue_zone_active,
         "metabolic_milestone": metabolic_milestone,
         "bloch_coords": [math.sin(theta_q0), 0, math.cos(theta_q0)],
+        "telomere_length": round(tl_current, 1),
+        "math_breakdown": math_breakdown,
         "biological_age": bio_age,
     }
 
 
-def run_quantum_research_sim(age, stress, exercise_mins, weight_gain, diet_quality, muscle_score):
+def run_quantum_research_sim(
+    age,
+    stress,
+    exercise_mins,
+    weight_gain,
+    diet_quality,
+    muscle_score,
+    vitd_supplement,
+    sleep_hours,
+):
     """Backward-compatible wrapper."""
-    return run_quantum_simulation(age, stress, exercise_mins, weight_gain, diet_quality, muscle_score)
+    return run_quantum_simulation(
+        age,
+        stress,
+        exercise_mins,
+        weight_gain,
+        diet_quality,
+        muscle_score,
+        vitd_supplement,
+        sleep_hours,
+    )
 
 
 def display_bloch_sphere(coords):
@@ -272,14 +319,17 @@ params_col, content_col = st.columns([1, 3])
 with params_col:
     st.markdown("### Parameters")
     age = st.slider("Age (years)", min_value=20, max_value=90, value=45, step=1)
-    stress = st.slider("Stress Level", min_value=0, max_value=100, value=50, step=1)
+    stress = st.slider("Stress Level (0–10)", min_value=0, max_value=10, value=5, step=1)
     st.markdown("#### Research inputs")
     strength_mins = st.slider("Weekly Strength Training (mins)", min_value=0, max_value=300, value=60, step=5)
     body_fat_change = st.slider("Body Fat % Change", min_value=-20.0, max_value=30.0, value=0.0, step=0.5)
     diet_quality = st.slider("Diet Quality", min_value=0, max_value=100, value=60, step=5)
     muscle_score = st.slider("Muscle Score", min_value=0, max_value=100, value=60, step=5)
 
-st.sidebar.caption("Quantum Mode: Multi-Qubit Register Active")
+with st.sidebar:
+    st.caption("Quantum Mode: Multi-Qubit Register Active")
+    vitd_supplement = st.checkbox("Vitamin D3 Supplementation", value=False)
+    sleep_hours = st.slider("Sleep Hours", min_value=4, max_value=12, value=8, step=1)
 
 # ---- Load studies table (for display) ----
 df_studies = None
@@ -290,7 +340,16 @@ except Exception:
 
 # ---- Run research-backed quantum simulation ----
 # Maps: exercise_mins=strength_mins, weight_gain=body_fat_change
-sim_result = run_quantum_simulation(age, stress, strength_mins, body_fat_change, diet_quality, muscle_score)
+sim_result = run_quantum_simulation(
+    age,
+    stress,
+    strength_mins,
+    body_fat_change,
+    diet_quality,
+    muscle_score,
+    vitd_supplement,
+    sleep_hours,
+)
 theta = sim_result["theta"]
 prob_0 = sim_result["prob_0"]
 prob_1 = sim_result["prob_1"]
@@ -301,6 +360,8 @@ metabolic_milestone = sim_result["metabolic_milestone"]
 bloch_coords = sim_result["bloch_coords"]
 decay_probability = prob_1
 biological_age = sim_result["biological_age"]
+telomere_length = sim_result["telomere_length"]
+math_breakdown = sim_result["math_breakdown"]
 
 # ---- Main content: big Biological Age + chart ----
 with content_col:
@@ -309,6 +370,13 @@ with content_col:
         f'<div class="glass-card">'
         f'<div class="metric-label">Biological Age</div>'
         f'<div class="bio-age-readout">{biological_age} years</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f'<div class="glass-card" style="margin-top:1rem;">'
+        f'<div class="metric-label">Current Telomere Length</div>'
+        f'<div class="metric-value">{telomere_length:.1f} bp</div>'
         f'</div>',
         unsafe_allow_html=True,
     )
@@ -366,6 +434,13 @@ with content_col:
         st.markdown('<div class="glass-card">', unsafe_allow_html=True)
         st.plotly_chart(fig, use_container_width=True)
         st.markdown('</div>')
+
+        st.markdown("#### Math Breakdown")
+        st.text_area(
+            "Telomere Attrition Equation",
+            value=math_breakdown,
+            height=80,
+        )
 
     with bloch_col:
         st.markdown("#### Genetics Qubit Bloch Sphere")
