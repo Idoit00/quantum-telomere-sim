@@ -17,112 +17,17 @@ import plotly.express as px
 DATA_PATH = "study_data.csv"
 
 
-TL_BIRTH_BP = 10_000
-TL_SENESCENCE_FLOOR_BP = 4_000
-AVG_POPULATION_ATTRITION_BP_PER_YEAR = 30.0
-MAX_BIOLOGICAL_AGE_ADVANTAGE_YEARS = 15.0
-
-
-def load_study_data():
-    try:
-        return pd.read_csv(DATA_PATH)
-    except Exception:
-        return pd.DataFrame(columns=["Factor", "Effect_Size", "Metric", "Source"])
-
-
-def get_effect(factor, default, df=None):
-    study_df = df if df is not None else load_study_data()
-    row = study_df[study_df["Factor"] == factor]
-    return float(row["Effect_Size"].values[0]) if len(row) > 0 else float(default)
-
-
-def compute_telomere_length_bp(
-    *,
-    age_years: int,
-    strength_training_mins_per_week: int,
-    stress_level_1_to_10: int,
-    sleep_hours: float,
-    vitamin_d3: bool,
-    diet_quality: int = 50,
-    adiposity_change_percent: float = 0.0,
-):
-    """
-    Physics-based equation:
-      TL_Current = TL_Birth - (Age * Attrition) + (ST * Strength_Effect) + (VitD_Bonus) + (Sleep_Mod) + (Diet_Mod) + (Adiposity_Mod)
-    Where:
-      TL_Birth = 10,000 bp baseline
-      Senescence floor = 4,000 bp
-      Attrition = 45 bp/year if stress is high, else 15.5 bp/year
-      ST bonus = CSV-backed strength effect * weekly strength minutes
-      VitD_Bonus = 35 bp/year if supplementing, else 0
-      Sleep_Mod = -20 bp penalty if sleep is below 7h or above 9h, else 0
-      Diet_Mod = CSV-backed Sugar_Meat_Diet effect scaled by diet quality
-      Adiposity_Mod = CSV-backed Adiposity effect scaled by positive adiposity change
-    """
-    study_df = load_study_data()
-    strength_effect = get_effect("Strength_Training", 0.67, df=study_df)
-    diet_effect = get_effect("Sugar_Meat_Diet", -24.8, df=study_df)
-    adiposity_effect = get_effect("Adiposity", -4.0, df=study_df)
-
-    high_stress = stress_level_1_to_10 >= 7
-    annual_attrition = 45.0 if high_stress else 15.5
-
-    strength_bonus_bp = float(strength_training_mins_per_week) * strength_effect
-    vitd_bonus_bp = 35.0 if vitamin_d3 else 0.0
-    sleep_mod_bp = -20.0 if float(sleep_hours) < 7.0 or float(sleep_hours) > 9.0 else 0.0
-    diet_mod_bp = ((float(diet_quality) - 50.0) / 50.0) * abs(diet_effect)
-    adiposity_mod_bp = max(0.0, float(adiposity_change_percent)) * adiposity_effect
-
-    tl = (
-        TL_BIRTH_BP
-        - (float(age_years) * annual_attrition)
-        + strength_bonus_bp
-        + vitd_bonus_bp
-        + sleep_mod_bp
-        + diet_mod_bp
-        + adiposity_mod_bp
-    )
-    tl = max(float(TL_SENESCENCE_FLOOR_BP), float(tl))
-
-    return {
-        "tl_current_bp": float(tl),
-        "annual_attrition_bp_per_year": float(annual_attrition),
-        "strength_bonus_bp": float(strength_bonus_bp),
-        "strength_effect_bp_per_min": float(strength_effect),
-        "vitd_bonus_bp": float(vitd_bonus_bp),
-        "sleep_mod_bp": float(sleep_mod_bp),
-        "diet_mod_bp": float(diet_mod_bp),
-        "adiposity_mod_bp": float(adiposity_mod_bp),
-    }
-
-
-def biological_age_from_telomere_length(*, tl_current_bp: float, chronological_age_years: int):
-    """
-    Computes Biological Age from the gap between the user's telomere length and
-    the age-matched population expectation, then converts that gap into a bounded
-    age delta.
-    """
-    expected_tl_bp = float(TL_BIRTH_BP) - (
-        float(chronological_age_years) * float(AVG_POPULATION_ATTRITION_BP_PER_YEAR)
-    )
-    bp_delta_vs_average = float(tl_current_bp) - expected_tl_bp
-    telomere_lifespan_reserve_bp = float(TL_BIRTH_BP - TL_SENESCENCE_FLOOR_BP)
-    age_delta_years = (
-        bp_delta_vs_average / telomere_lifespan_reserve_bp
-    ) * float(chronological_age_years)
-
-    bio_age = float(chronological_age_years) - age_delta_years
-    minimum_realistic_age = float(chronological_age_years) - MAX_BIOLOGICAL_AGE_ADVANTAGE_YEARS
-    bio_age = max(minimum_realistic_age, min(120.0, bio_age))
-    return round(max(0.0, bio_age), 1)
-
-
 def run_quantum_simulation(age, stress, exercise_mins, weight_gain, diet_quality, muscle_score):
     """Research-backed quantum simulation: multi-qubit register driven by CSV values."""
-    df = load_study_data()
+    df = pd.read_csv(DATA_PATH)
+
+    # Extract study values (with fallbacks if factor missing)
+    def get_effect(factor, default):
+        row = df[df["Factor"] == factor]
+        return float(row["Effect_Size"].values[0]) if len(row) > 0 else default
 
     strength_impact = get_effect("Strength_Training", 0.67)
-    diet_impact = get_effect("Sugar_Meat_Diet", -24.8)
+    diet_impact = get_effect("Sugar_Meat_Diet", -50.0)
     weight_impact = get_effect("Adiposity", -4.0)
     inheritance_base = get_effect("Heritability", 64.0) / 100.0
     noise_level = (age / 100.0) * 0.1
@@ -135,13 +40,8 @@ def run_quantum_simulation(age, stress, exercise_mins, weight_gain, diet_quality
         theta_q0 += 0.15 * math.pi
     theta_q0 = max(0.0, min(math.pi, theta_q0))
 
-    # Q1: map Muscle Bonus (0.67 bp/min) to RY rotation angle
-    # Scale weekly minutes to [0, π] using the sidebar max (300 mins).
-    muscle_bonus_bp = max(0.0, float(exercise_mins)) * strength_impact
-    max_muscle_bonus_bp = 300.0 * strength_impact
-    theta_q1 = max(0.0, min(math.pi, (muscle_bonus_bp / max_muscle_bonus_bp) * math.pi))
-
-    # Q2/Q3: rotations from study effect sizes (diet quality + adiposity)
+    # Q1/Q2/Q3: rotations from study effect sizes
+    theta_q1 = max(0.0, min(math.pi, (0.5 + (strength_impact / 100.0)) * math.pi))
     theta_q2 = max(0.0, min(math.pi, (0.5 + (diet_impact / 100.0)) * math.pi))
     theta_q3 = max(0.0, min(math.pi, (0.5 + (weight_impact / 100.0)) * math.pi))
 
@@ -153,8 +53,8 @@ def run_quantum_simulation(age, stress, exercise_mins, weight_gain, diet_quality
     qc.ry(theta_q3, 3)
 
     # Entanglement links
-    qc.cx(1, 0)  # Muscle Bonus -> Genetics (resilience coupling)
-    qc.cx(2, 3)  # Diet Quality (metabolic stress) -> Adiposity (genetic risk proxy)
+    qc.cx(1, 0)  # Exercise -> Genetics
+    qc.cx(2, 3)  # Diet -> Adiposity
 
     # Homeostatic failure tipping points under extreme environmental pressure.
     if stress > 80:
@@ -221,7 +121,7 @@ def run_quantum_simulation(age, stress, exercise_mins, weight_gain, diet_quality
         "theta": theta_q0,
         "theta_components": {
             "q0_genetics_age": theta_q0,
-            "q1_muscle_bonus": theta_q1,
+            "q1_exercise": theta_q1,
             "q2_nutrition": theta_q2,
             "q3_adiposity": theta_q3,
         },
@@ -326,10 +226,6 @@ st.markdown("""
         padding: 1rem 0;
     }
     
-    .bio-age-readout.senescence-warning {
-        color: #e07a5f !important;
-    }
-    
     .footer-box {
         font-family: 'Source Serif 4', Georgia, serif;
         font-size: 0.9rem;
@@ -376,52 +272,19 @@ params_col, content_col = st.columns([1, 3])
 with params_col:
     st.markdown("### Parameters")
     age = st.slider("Age (years)", min_value=20, max_value=90, value=45, step=1)
+    stress = st.slider("Stress Level", min_value=0, max_value=100, value=50, step=1)
     st.markdown("#### Research inputs")
+    strength_mins = st.slider("Weekly Strength Training (mins)", min_value=0, max_value=300, value=60, step=5)
     body_fat_change = st.slider("Body Fat % Change", min_value=-20.0, max_value=30.0, value=0.0, step=0.5)
     diet_quality = st.slider("Diet Quality", min_value=0, max_value=100, value=60, step=5)
     muscle_score = st.slider("Muscle Score", min_value=0, max_value=100, value=60, step=5)
 
 st.sidebar.caption("Quantum Mode: Multi-Qubit Register Active")
-st.sidebar.markdown("### Lifestyle Inputs")
-strength_mins = st.sidebar.slider("Weekly Strength Training (0–300 mins)", min_value=0, max_value=300, value=60, step=5)
-sleep_hours = st.sidebar.slider("Sleep Hours (4–12)", min_value=4.0, max_value=12.0, value=8.0, step=0.25)
-stress_level_1_to_10 = st.sidebar.slider("Stress Level (1–10)", min_value=1, max_value=10, value=5, step=1)
-vitd_toggle = st.sidebar.toggle("Vitamin D3 supplementation", value=False)
-
-# Convert sidebar stress to the quantum model's 0–100 scale
-stress = int(round((stress_level_1_to_10 - 1) / 9 * 100))
-
-# --- Predictive Logic: physics-based telomere length + biological age ---
-tl_result = compute_telomere_length_bp(
-    age_years=age,
-    strength_training_mins_per_week=strength_mins,
-    stress_level_1_to_10=stress_level_1_to_10,
-    sleep_hours=sleep_hours,
-    vitamin_d3=vitd_toggle,
-    diet_quality=diet_quality,
-    adiposity_change_percent=body_fat_change,
-)
-telomere_length_bp = tl_result["tl_current_bp"]
-biological_age = biological_age_from_telomere_length(
-    tl_current_bp=telomere_length_bp,
-    chronological_age_years=age,
-)
-
-# UI helper: "Total Base Pairs Saved" (research constants called out explicitly)
-total_bp_saved = tl_result["strength_bonus_bp"] + tl_result["vitd_bonus_bp"]
 
 # ---- Load studies table (for display) ----
 df_studies = None
 try:
-    df_studies = load_study_data()
-    source_labels = {
-        "IMG_3285": "Direct Clinical Observation",
-        "PMC4707879": "PMC4707879",
-        "image_eff092": "Diet and Adiposity Analysis",
-        "image_efeda8": "Lifestyle Intervention Summary",
-    }
-    if "Source" in df_studies.columns:
-        df_studies["Source"] = df_studies["Source"].replace(source_labels)
+    df_studies = pd.read_csv(DATA_PATH)
 except Exception:
     df_studies = pd.DataFrame(columns=["Factor", "Effect_Size", "Metric", "Source"])
 
@@ -437,36 +300,17 @@ blue_zone_active = sim_result["blue_zone_active"]
 metabolic_milestone = sim_result["metabolic_milestone"]
 bloch_coords = sim_result["bloch_coords"]
 decay_probability = prob_1
+biological_age = sim_result["biological_age"]
 
 # ---- Main content: big Biological Age + chart ----
 with content_col:
-    senescence_reached = telomere_length_bp <= TL_SENESCENCE_FLOOR_BP
-    bio_age_class = "bio-age-readout senescence-warning" if senescence_reached else "bio-age-readout"
-
     # Big Biological Age readout
     st.markdown(
         f'<div class="glass-card">'
         f'<div class="metric-label">Biological Age</div>'
-        f'<div class="{bio_age_class}">{biological_age} years</div>'
+        f'<div class="bio-age-readout">{biological_age} years</div>'
         f'</div>',
         unsafe_allow_html=True,
-    )
-    if senescence_reached:
-        st.error("CRITICAL: Senescence Threshold Reached")
-    st.markdown(
-        f'<div class="glass-card" style="margin-top:0.75rem;">'
-        f'<div class="metric-label">Telomere Length (Estimated)</div>'
-        f'<div class="metric-value">{telomere_length_bp:,.0f} bp</div>'
-        f'</div>',
-        unsafe_allow_html=True,
-    )
-    st.text_input(
-        "Total Base Pairs Saved",
-        value=(
-            f"{total_bp_saved:,.1f} bp "
-            f"(Calculated from 0.67 bp/min Strength Training + 35 bp/year Vitamin D bonus.)"
-        ),
-        disabled=True,
     )
     st.caption(
         f"Biological Entropy: {entropy_level:.2%} "
