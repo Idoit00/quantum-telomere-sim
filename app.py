@@ -60,9 +60,10 @@ def run_quantum_simulation(
     buffer_term = strength_buffer + vitd_buffer + sleep_penalty
     tl_current = BIRTH_LENGTH - loss_term + buffer_term
 
-    # Adiposity Rule
-    if weight_gain > 15 and age > 50:
-        tl_current *= (1.0 + adiposity_pct / 100.0)
+    # Adiposity scales continuously with positive weight gain instead of triggering only late in life.
+    adiposity_severity = max(0.0, min(1.0, weight_gain / 30.0))
+    adiposity_multiplier = 1.0 + ((adiposity_pct / 100.0) * adiposity_severity)
+    tl_current *= adiposity_multiplier
 
     # Clamp within biological range
     tl_current = max(SENESCENCE_FLOOR, min(BIRTH_LENGTH, tl_current))
@@ -75,9 +76,11 @@ def run_quantum_simulation(
     # Metabolic milestone marker retained for UI context
     metabolic_milestone = (39 <= age <= 42) or (69 <= age <= 72)
 
-    # Q1/Q2/Q3: rotations from study effect sizes
-    theta_q1 = max(0.0, min(math.pi, (0.5 + (strength_impact / 100.0)) * math.pi))
-    theta_q2 = max(0.0, min(math.pi, (0.5 + (diet_impact / 100.0)) * math.pi))
+    # Q1/Q2/Q3: live slider states modulated by study effect sizes
+    exercise_ratio = max(0.0, min(1.0, exercise_mins / 300.0))
+    weight_gain_ratio = max(0.0, min(1.0, (weight_gain + 20.0) / 50.0))
+    theta_q1 = max(0.0, min(math.pi, exercise_ratio * (1.0 + (strength_impact / 100.0)) * math.pi))
+    theta_q2 = max(0.0, min(math.pi, weight_gain_ratio * (1.0 + abs(diet_impact) / 100.0) * math.pi))
     theta_q3 = max(0.0, min(math.pi, (heritability_baseline / 100.0) * math.pi))
 
     # Run the circuit: 4-qubit register, 1 classical bit
@@ -92,7 +95,7 @@ def run_quantum_simulation(
     qc.cx(2, 3)  # Diet -> Adiposity
 
     # Homeostatic failure tipping points under extreme environmental pressure.
-    if stress > 80:
+    if stress > 8:
         # High stress induces a bit-flip that overrides baseline genetic stability.
         qc.x(0)
     if exercise_mins < 30:
@@ -118,16 +121,17 @@ def run_quantum_simulation(
     prob_0 = counts.get("0", 0) / n
     prob_1 = counts.get("1", 0) / n
 
-    # Biological age from physics-based telomere model
+    # Biological age as an offset from the user's chronological age.
     telomere_loss = BIRTH_LENGTH - tl_current
-    bio_age_equivalent = telomere_loss / AVG_POP_DECAY
-    bio_age = round(max(20.0, min(95.0, bio_age_equivalent)), 1)
+    expected_loss = age * AVG_POP_DECAY
+    bio_age_delta = (telomere_loss - expected_loss) / AVG_POP_DECAY
+    bio_age = round(max(20.0, min(95.0, age + bio_age_delta)), 1)
 
     # Threshold/tipping point markers reinterpreted for clarity
     tipping_point_reached = tl_current <= (SENESCENCE_FLOOR + 500)
     math_breakdown = (
         f"10,000 - ({loss_term:.1f} bp loss) + ({buffer_term:.1f} bp buffers)"
-        f"{' with 4% adiposity tax' if (weight_gain > 15 and age > 50) else ''}"
+        f"{f' with {((1.0 - adiposity_multiplier) * 100.0):.1f}% adiposity tax' if adiposity_severity > 0 else ''}"
         f" = {tl_current:.1f} bp"
     )
 
