@@ -43,7 +43,7 @@ def run_quantum_simulation(
     strength_impact = get_effect("Strength_Training", 0.67)  # bp per min/week
     vitd_bonus_per_year = get_effect("Vitamin_D3", 35.0)  # bp saved per year
     sleep_penalty_per_year = get_effect("Sleep_Penalty", -20.0)  # bp adjustment per year
-    adiposity_effect_pct = get_effect("Adiposity", -4.0)  # % reduction
+    adiposity_pct = get_effect("Adiposity", -4.0)  # % reduction
     diet_impact = get_effect("Sugar_Meat_Diet", -24.8)  # nutrition stress impact
     heritability_baseline = get_effect("Heritability", 64.0)  # % baseline resilience
 
@@ -64,7 +64,7 @@ def run_quantum_simulation(
 
     # Adiposity Rule
     if weight_gain > 15 and age > 50:
-        tl_current *= (1.0 + adiposity_effect_pct / 100.0)
+        tl_current *= (1.0 + adiposity_pct / 100.0)
 
     # Clamp within biological range
     tl_current = max(SENESCENCE_FLOOR, min(BIRTH_LENGTH, tl_current))
