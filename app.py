@@ -36,16 +36,16 @@ def run_quantum_simulation(
         return float(row["Effect_Size"].values[0]) if len(row) > 0 else default
 
     # Pull core effects from the study table
+    BIRTH_LENGTH = get_effect("Birth_Length", 10000.0)  # bp
+    SENESCENCE_FLOOR = get_effect("Senescence_Floor", 4000.0)  # bp
+    ATTRITION_LOW = get_effect("Attrition_Low_Stress", 15.5)  # bp/year
+    ATTRITION_HIGH = get_effect("Attrition_High_Stress", 45.0)  # bp/year
     strength_impact = get_effect("Strength_Training", 0.67)  # bp per min/week
     vitd_bonus_per_year = get_effect("Vitamin_D3", 35.0)  # bp saved per year
     sleep_penalty_per_year = abs(get_effect("Sleep_Penalty", -20.0))  # bp loss per year
     adiposity_effect_pct = abs(get_effect("Adiposity", -4.0))  # % reduction
+    heritability_baseline = get_effect("Heritability", 64.0)  # % baseline resilience
 
-    # Physics-based telomere constants
-    BIRTH_LENGTH = 10000.0  # bp
-    SENESCENCE_FLOOR = 4000.0  # bp
-    ATTRITION_LOW = 15.5  # bp/year
-    ATTRITION_HIGH = 45.0  # bp/year
     AVG_POP_DECAY = 30.25  # bp/year
 
     # Attrition selection (Stress Rule)
@@ -72,16 +72,16 @@ def run_quantum_simulation(
     # 10,000 bp -> theta = 0 (pure resilience), 4,000 bp -> theta = pi (pure decay).
     theta_q0 = ((BIRTH_LENGTH - tl_current) / (BIRTH_LENGTH - SENESCENCE_FLOOR)) * math.pi
     theta_q0 = max(0.0, min(math.pi, theta_q0))
+    heritability_shift = ((100.0 - heritability_baseline) / 100.0) - 0.5
+    theta_q0 = max(0.0, min(math.pi, theta_q0 + (heritability_shift * 0.15 * math.pi)))
 
     # Metabolic milestone marker retained for UI context
     metabolic_milestone = (39 <= age <= 42) or (69 <= age <= 72)
 
     # Q1/Q2/Q3: rotations from study effect sizes
-    diet_impact = get_effect("Sugar_Meat_Diet", -50.0)
-    weight_impact = get_effect("Adiposity", -4.0)
     theta_q1 = max(0.0, min(math.pi, (0.5 + (strength_impact / 100.0)) * math.pi))
-    theta_q2 = max(0.0, min(math.pi, (0.5 + (diet_impact / 100.0)) * math.pi))
-    theta_q3 = max(0.0, min(math.pi, (0.5 + (weight_impact / 100.0)) * math.pi))
+    theta_q2 = max(0.0, min(math.pi, (heritability_baseline / 100.0) * math.pi))
+    theta_q3 = max(0.0, min(math.pi, (0.5 + (adiposity_effect_pct / 100.0)) * math.pi))
 
     # Run the circuit: 4-qubit register, 1 classical bit
     qc = QuantumCircuit(4, 1)
