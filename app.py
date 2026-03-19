@@ -22,8 +22,6 @@ def run_quantum_simulation(
     stress,
     exercise_mins,
     weight_gain,
-    diet_quality,
-    muscle_score,
     vitd_supplement,
     sleep_hours,
 ):
@@ -101,14 +99,6 @@ def run_quantum_simulation(
         # Sedentary state increases instability coupling between genetics and movement.
         qc.cx(0, 1)
 
-    elite_longevity = diet_quality > 85 and exercise_mins > 180
-    metabolic_shield = muscle_score > 70 and weight_gain < 5
-    if elite_longevity:
-        # Blue Zone synergy uses Toffoli-style correction: when exercise + diet controls align,
-        # the circuit applies quantum error correction to counter noise in genetics.
-        qc.ccx(1, 2, 0)
-        qc.ry(-0.12, 0)  # Nudge Q0 back toward |0> (younger/resilient state)
-
     # Decoherence layer: age-driven biological entropy across all qubits
     noise_level = (age / 100.0) * 0.1
     for i in range(4):
@@ -135,8 +125,6 @@ def run_quantum_simulation(
 
     # Threshold/tipping point markers reinterpreted for clarity
     tipping_point_reached = tl_current <= (SENESCENCE_FLOOR + 500)
-    blue_zone_active = elite_longevity or metabolic_shield
-
     math_breakdown = (
         f"10,000 - ({loss_term:.1f} bp loss) + ({buffer_term:.1f} bp buffers)"
         f"{' with 4% adiposity tax' if (weight_gain > 15 and age > 50) else ''}"
@@ -155,7 +143,6 @@ def run_quantum_simulation(
         "prob_1": prob_1,
         "entropy_level": noise_level,
         "tipping_point_reached": tipping_point_reached,
-        "blue_zone_active": blue_zone_active,
         "metabolic_milestone": metabolic_milestone,
         "bloch_coords": [math.sin(theta_q0), 0, math.cos(theta_q0)],
         "telomere_length": round(tl_current, 1),
@@ -169,8 +156,6 @@ def run_quantum_research_sim(
     stress,
     exercise_mins,
     weight_gain,
-    diet_quality,
-    muscle_score,
     vitd_supplement,
     sleep_hours,
 ):
@@ -180,8 +165,6 @@ def run_quantum_research_sim(
         stress,
         exercise_mins,
         weight_gain,
-        diet_quality,
-        muscle_score,
         vitd_supplement,
         sleep_hours,
     )
@@ -322,8 +305,6 @@ with params_col:
     st.markdown("#### Research inputs")
     strength_mins = st.slider("Weekly Strength Training (mins)", min_value=0, max_value=300, value=60, step=5)
     body_fat_change = st.slider("Body Fat % Change", min_value=-20.0, max_value=30.0, value=0.0, step=0.5)
-    diet_quality = st.slider("Diet Quality", min_value=0, max_value=100, value=60, step=5)
-    muscle_score = st.slider("Muscle Score", min_value=0, max_value=100, value=60, step=5)
 
 with st.sidebar:
     st.caption("Quantum Mode: Multi-Qubit Register Active")
@@ -344,8 +325,6 @@ sim_result = run_quantum_simulation(
     stress,
     strength_mins,
     body_fat_change,
-    diet_quality,
-    muscle_score,
     vitd_supplement,
     sleep_hours,
 )
@@ -354,7 +333,6 @@ prob_0 = sim_result["prob_0"]
 prob_1 = sim_result["prob_1"]
 entropy_level = sim_result["entropy_level"]
 tipping_point_reached = sim_result["tipping_point_reached"]
-blue_zone_active = sim_result["blue_zone_active"]
 metabolic_milestone = sim_result["metabolic_milestone"]
 bloch_coords = sim_result["bloch_coords"]
 decay_probability = prob_1
@@ -389,14 +367,6 @@ with content_col:
         st.info(
             "RESEARCH NOTE: You are currently in a high-velocity telomere attrition window "
             "(Age 40/70 Milestone)."
-        )
-    if blue_zone_active:
-        st.markdown(
-            '<div style="background:#d4af37;color:#1a1a1a;padding:0.6rem 0.9rem;'
-            'border-radius:10px;font-weight:700;">'
-            "BLUE ZONE SYNERGY ACTIVATED: Enhanced Cellular Protection Enabled."
-            "</div>",
-            unsafe_allow_html=True,
         )
     st.markdown("")
     chart_col, bloch_col = st.columns(2)
@@ -466,8 +436,7 @@ with content_col:
         <div class="footer-box">
             <strong>About this model:</strong> This simulation uses quantum superposition to model biological uncertainty.
             A 4-qubit register is prepared with RY rotations for Genetics (Age), Exercise, Nutrition, and Adiposity, with entanglement links between exercise-genetics and diet-adiposity.
-            Measuring the genetics qubit gives the quantum probability of cellular decay; Biological Age combines this with the research inputs.
-            Blue Zone Synergy models Epigenetic Resilience: combined healthy behaviors create a protective buffer against chronological aging.
+            Measuring the genetics qubit gives the quantum probability of cellular decay; Biological Age combines this with the synced research inputs.
         </div>
         """,
         unsafe_allow_html=True,
